@@ -43,9 +43,9 @@ func main() {
 	app := http.StripPrefix("/app", fs)
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(app))
 
-	mux.HandleFunc("/healthz", ready)
-	mux.HandleFunc("/metrics", apiCfg.metrics)
-	mux.HandleFunc("/reset", apiCfg.reset)
+	mux.HandleFunc("GET /healthz", ready)
+	mux.HandleFunc("GET /metrics", apiCfg.metrics)
+	mux.HandleFunc("POST /reset", apiCfg.reset)
 
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatalf("server error %v", err)
