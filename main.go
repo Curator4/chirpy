@@ -5,10 +5,12 @@ import (
 	"net/http"
 )
 
+const port = "8080"
+
 func main() {
 	mux := http.NewServeMux()
 	srv := &http.Server{
-		Addr:    ":8080",
+		Addr:    ":" + port,
 		Handler: mux,
 	}
 
