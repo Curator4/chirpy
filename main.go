@@ -38,10 +38,11 @@ func main() {
 		Handler: mux,
 	}
 	apiCfg := apiConfig{}
+
 	fs := http.FileServer(http.Dir("."))
 	app := http.StripPrefix("/app", fs)
-
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(app))
+
 	mux.HandleFunc("/healthz", ready)
 	mux.HandleFunc("/metrics", apiCfg.metrics)
 	mux.HandleFunc("/reset", apiCfg.reset)
