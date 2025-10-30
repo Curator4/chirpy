@@ -4,17 +4,18 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/Curator4/chirpy/internal/auth"
-	"github.com/Curator4/chirpy/internal/database"
-	"github.com/google/uuid"
-	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/Curator4/chirpy/internal/auth"
+	"github.com/Curator4/chirpy/internal/database"
+	"github.com/google/uuid"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 const port = "8080"
@@ -24,13 +25,15 @@ type apiConfig struct {
 	dbQueries      *database.Queries
 	platform       string
 	secret         string
+	polkaKey       string
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
+	ID          uuid.UUID `json:"id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Email       string    `json:"email"`
+	IsChirpyRed bool      `json:"is_chirpy_red"`
 }
 
 type UserWithToken struct {
@@ -131,10 +134,11 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 
 	// map type database.User to type main.User ???
 	mainUser := User{
-		ID:        dbUser.ID,
-		CreatedAt: dbUser.CreatedAt,
-		UpdatedAt: dbUser.UpdatedAt,
-		Email:     dbUser.Email,
+		ID:          dbUser.ID,
+		CreatedAt:   dbUser.CreatedAt,
+		UpdatedAt:   dbUser.UpdatedAt,
+		Email:       dbUser.Email,
+		IsChirpyRed: dbUser.IsChirpyRed,
 	}
 
 	// prepare response
@@ -319,10 +323,11 @@ func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mainUser := User{
-		ID:        dbUser.ID,
-		CreatedAt: dbUser.CreatedAt,
-		UpdatedAt: dbUser.UpdatedAt,
-		Email:     dbUser.Email,
+		ID:          dbUser.ID,
+		CreatedAt:   dbUser.CreatedAt,
+		UpdatedAt:   dbUser.UpdatedAt,
+		Email:       dbUser.Email,
+		IsChirpyRed: dbUser.IsChirpyRed,
 	}
 
 	// JWT stuff
@@ -429,7 +434,7 @@ func (cfg *apiConfig) revoke(w http.ResponseWriter, r *http.Request) {
 
 	bearerToken, err := auth.GetBearerToken(r.Header)
 	if err != nil {
-		errorMsg := fmt.Sprintf("authorization error: %v", err)
+		errorMsg = fmt.Sprintf("authorization error: %v", err)
 		log.Print(errorMsg)
 		respondWithError(w, http.StatusUnauthorized, errorMsg)
 		return
@@ -439,6 +444,194 @@ func (cfg *apiConfig) revoke(w http.ResponseWriter, r *http.Request) {
 		errorMsg = fmt.Sprintf("error in refreshToken revokation %v", err)
 		log.Print(errorMsg)
 		respondWithError(w, 500, errorMsg)
+		return
+	}
+
+	w.WriteHeader(204)
+}
+
+func (cfg *apiConfig) updateUser(w http.ResponseWriter, r *http.Request) {
+	var err error
+	var errorMsg string
+
+	bearerToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		errorMsg = fmt.Sprintf("authorization error: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, http.StatusUnauthorized, errorMsg)
+		return
+	}
+
+	userID, err := auth.ValidateJWT(bearerToken, cfg.secret)
+	if err != nil {
+		errorMsg = fmt.Sprintf("token included but invalid: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, http.StatusUnauthorized, errorMsg)
+		return
+	}
+
+	type parameters struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err = decoder.Decode(&params)
+	if err != nil {
+		errorMsg = fmt.Sprintf("error decoding parameters: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, 500, errorMsg)
+		return
+	}
+	if params.Password == "" || params.Email == "" {
+		errorMsg = fmt.Sprintf("need both passwrd and email fields: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, 400, errorMsg)
+		return
+	}
+
+	hashedPassword, err := auth.HashPassword(params.Password)
+	if err != nil {
+		errorMsg = fmt.Sprintf("error hasing password: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, 500, errorMsg)
+		return
+	}
+
+	updateParams := database.UpdateUserEmailAndPasswordParams{
+		Email:          params.Email,
+		HashedPassword: hashedPassword,
+		ID:             userID,
+	}
+
+	dbUser, err := cfg.dbQueries.UpdateUserEmailAndPassword(r.Context(), updateParams)
+	if err != nil {
+		errorMsg = fmt.Sprintf("error updating userL %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, 500, errorMsg)
+		return
+	}
+
+	mainUser := User{
+		ID:          dbUser.ID,
+		CreatedAt:   dbUser.CreatedAt,
+		UpdatedAt:   dbUser.UpdatedAt,
+		Email:       dbUser.Email,
+		IsChirpyRed: dbUser.IsChirpyRed,
+	}
+
+	if err = respondWithJSON(w, 200, mainUser); err != nil {
+		errorMsg = fmt.Sprintf("error marshalling JSON: %v", err)
+		log.Print(errorMsg)
+	}
+}
+
+func (cfg *apiConfig) deleteChirp(w http.ResponseWriter, r *http.Request) {
+	var err error
+	var errorMsg string
+
+	bearerToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		errorMsg = fmt.Sprintf("authorization error: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, http.StatusUnauthorized, errorMsg)
+		return
+	}
+
+	userID, err := auth.ValidateJWT(bearerToken, cfg.secret)
+	if err != nil {
+		errorMsg = fmt.Sprintf("token included but invalid: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, http.StatusUnauthorized, errorMsg)
+		return
+	}
+
+	idStr := r.PathValue("chirpID")
+	chirpID, err := uuid.Parse(idStr)
+	if err != nil {
+		errorMsg = fmt.Sprintf("invalid id: %s", err)
+		log.Print(errorMsg)
+		respondWithError(w, 400, errorMsg)
+		return
+	}
+
+	dbChirp, err := cfg.dbQueries.GetChirp(r.Context(), chirpID)
+	if err != nil {
+		errorMsg = fmt.Sprintf("could not find chirp in db: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, 404, errorMsg)
+		return
+	}
+
+	if userID != dbChirp.UserID.UUID {
+		errorMsg = fmt.Sprintf("chirp does not belong to authenticated user: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, 403, errorMsg)
+		return
+	}
+
+	if err = cfg.dbQueries.DeleteChirp(r.Context(), chirpID); err != nil {
+		errorMsg = fmt.Sprintf("chirp deletion failed %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, 500, errorMsg)
+		return
+	}
+
+	w.WriteHeader(204)
+}
+
+func (cfg *apiConfig) upgradeUser(w http.ResponseWriter, r *http.Request) {
+	var err error
+	var errorMsg string
+
+	apiKey, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		errorMsg = fmt.Sprintf("failed to get apikey: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, 401, errorMsg)
+		return
+	}
+
+	if apiKey != cfg.polkaKey {
+		errorMsg = fmt.Sprintf("invalid APIKey, %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, 401, errorMsg)
+		return
+	}
+
+	type parameters struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserID uuid.UUID `json:"user_id"`
+		} `json:"data"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err = decoder.Decode(&params)
+	if err != nil {
+		errorMsg = fmt.Sprintf("error decoding parameters: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, 500, errorMsg)
+		return
+	}
+
+	if params.Data.UserID == uuid.Nil {
+		errorMsg = fmt.Sprintf("empty userID: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, 500, errorMsg)
+	}
+
+	if params.Event != "user.upgraded" {
+		w.WriteHeader(204)
+		return
+	}
+
+	if err = cfg.dbQueries.UpgradeUserByID(r.Context(), params.Data.UserID); err != nil {
+		errorMsg = fmt.Sprintf("user could not be found: %v", err)
+		log.Print(errorMsg)
+		respondWithError(w, 404, errorMsg)
 		return
 	}
 
@@ -457,6 +650,7 @@ func main() {
 		dbQueries: database.New(db),
 		platform:  os.Getenv("PLATFORM"),
 		secret:    os.Getenv("SECRET"),
+		polkaKey:  os.Getenv("POLKA_KEY"),
 	}
 
 	mux := http.NewServeMux()
@@ -478,6 +672,9 @@ func main() {
 	mux.HandleFunc("POST /api/validate_chirp", validate)
 	mux.HandleFunc("POST /api/users", apiCfg.createUser)
 	mux.HandleFunc("POST /api/chirps", apiCfg.chirp)
+	mux.HandleFunc("PUT /api/users", apiCfg.updateUser)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.deleteChirp)
+	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.upgradeUser)
 
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.reset)
@@ -538,7 +735,7 @@ func validate(w http.ResponseWriter, r *http.Request) {
 }
 
 // json helpers
-func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) error {
+func respondWithJSON(w http.ResponseWriter, code int, payload any) error {
 	response, err := json.Marshal(payload)
 	if err != nil {
 		return err

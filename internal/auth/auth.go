@@ -87,3 +87,20 @@ func MakeRefreshToken() (string, error) {
 	}
 	return token, nil
 }
+
+// apikey
+func GetAPIKey(headers http.Header) (string, error) {
+	header := headers.Get("Authorization")
+	if header == "" {
+		return "", errors.New("missing authorization header")
+	}
+	apiKey := strings.TrimPrefix(header, "ApiKey ")
+	if apiKey == header {
+		return "", errors.New("malformed authorization header")
+	}
+	if apiKey == "" {
+		return "", errors.New("missing apikey")
+	}
+
+	return apiKey, nil
+}
