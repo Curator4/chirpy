@@ -1,5 +1,5 @@
 # chirpy
-guided implementation of [bootdevs](bootdev.com) *HTTP Servers in GO* course
+guided implementation of [bootdevs](https://bootdev.com) **HTTP Servers in GO** course
 
 not a product with quality control, don't evaluate my abilities based on this project 🙃
 
