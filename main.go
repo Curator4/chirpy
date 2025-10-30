@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -216,16 +217,38 @@ func (cfg *apiConfig) chirp(w http.ResponseWriter, r *http.Request) {
 func (cfg *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 	var err error
 	var errorMsg string
+	var dbChirps []database.Chirp
 
-	dbChirps, err := cfg.dbQueries.GetChirps(r.Context())
-	if err != nil {
-		errorMsg = fmt.Sprintf("database error, could not get chirps: %s", err)
-		log.Print(errorMsg)
-		respondWithError(w, 500, errorMsg)
-		return
+	authorIDStr := r.URL.Query().Get("author_id")
+	sortOrder := r.URL.Query().Get("sort")
+
+	if authorIDStr == "" {
+		dbChirps, err = cfg.dbQueries.GetChirps(r.Context())
+		if err != nil {
+			errorMsg = fmt.Sprintf("database error, could not get chirps: %s", err)
+			log.Print(errorMsg)
+			respondWithError(w, 500, errorMsg)
+			return
+		}
+	} else {
+		authorID, err := uuid.Parse(authorIDStr)
+		if err != nil {
+			errorMsg = fmt.Sprintf("invalid author id %v", err)
+			log.Print(errorMsg)
+			respondWithError(w, 400, errorMsg)
+			return
+		}
+
+		dbChirps, err = cfg.dbQueries.GetUserChirps(r.Context(), uuid.NullUUID{UUID: authorID, Valid: true})
+		if err != nil {
+			errorMsg = fmt.Sprintf("error getting chirps from user %v", err)
+			log.Print(errorMsg)
+			respondWithError(w, 500, errorMsg)
+			return
+		}
 	}
 
-	var mainChirps []Chirp
+	mainChirps := make([]Chirp, 0)
 	var mainChirp Chirp
 
 	for _, dbChirp := range dbChirps {
@@ -237,6 +260,13 @@ func (cfg *apiConfig) getChirps(w http.ResponseWriter, r *http.Request) {
 			UserID:    dbChirp.UserID,
 		}
 		mainChirps = append(mainChirps, mainChirp)
+	}
+
+	//sorting
+	if sortOrder == "desc" {
+		sort.Slice(mainChirps, func(i, j int) bool { return mainChirps[j].CreatedAt.Before(mainChirps[i].CreatedAt) })
+	} else {
+		sort.Slice(mainChirps, func(i, j int) bool { return mainChirps[i].CreatedAt.Before(mainChirps[j].CreatedAt) })
 	}
 
 	if err = respondWithJSON(w, 200, mainChirps); err != nil {
